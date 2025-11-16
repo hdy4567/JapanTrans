@@ -1,0 +1,2 @@
+# JapanTrans
+Japan language
