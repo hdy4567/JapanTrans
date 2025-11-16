@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>실시간 일본어 번역 시뮬레이터</title>
+    <!-- Tailwind CSS CDN 로드 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <style>
+        /* Inter 폰트 사용 */
+        :root {
+            font-family: 'Inter', sans-serif;
+        }
+        /* 로딩 스피너 애니메이션 */
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .animate-spin-slow {
+            animation: spin 3s linear infinite;
+        }
+        /* 붙여넣기 대상 영역 스타일 */
+        #pasteArea {
+            border: 2px dashed #a5b4fc; /* indigo-300 */
+            background-color: #f5f3ff; /* indigo-50 */
+            min-height: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        #pasteArea.active {
+            border-color: #4f46e5; /* indigo-600 */
+            background-color: #eef2ff; /* indigo-100 */
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen p-4 sm:p-8">
+
+    <!-- 메인 애플리케이션 컨테이너 -->
+    <div id="appContainer" class="max-w-4xl mx-auto bg-white shadow-2xl rounded-xl p-6 md:p-10 border border-gray-100">
+
+        <h1 class="text-3xl font-bold text-gray-800 mb-3 text-center">스크린 번역 프로토타입 🇯🇵 → 🇰🇷</h1>
+        <p class="text-center text-sm text-red-600 font-semibold mb-6 p-2 bg-red-50 rounded-lg">
+            ⚠️ 이 앱은 웹 환경의 보안 제약으로 인해 실제 '실시간 화면 캡처 및 대체'는 불가능하며, **클립보드 이미지** 또는 텍스트 입력 기반 번역 프로토타입입니다.
+        </p>
+        <p class="text-center text-gray-600 mb-8">
+            Windows 캡처 도구(`Win + Shift + S`)로 영역을 복사한 후, 아래 영역에 바로 **붙여넣기(`Ctrl+V`)** 하세요.
+        </p>
+
+        <!-- 입력 섹션 -->
+        <div class="space-y-6">
+            <div class="flex flex-col space-y-4 md:flex-row md:space-x-4 md:space-y-0">
+                
+                <!-- 이미지 입력 (클립보드/스크린샷 시뮬레이션) -->
+                <div class="flex-1">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">1. 클립보드 이미지 붙여넣기 (Ctrl+V)</label>
+                    <div id="pasteArea" class="rounded-lg p-4">
+                        <span id="pasteHint" class="text-indigo-600 font-semibold">이 영역에 캡처 이미지를 붙여넣으세요.</span>
+                    </div>
+                    <!-- (기존의 File Input은 숨김 처리) -->
+                    <input type="file" id="imageInput" accept="image/*" class="hidden" />
+                </div>
+                
+                <!-- 텍스트 직접 입력 -->
+                <div class="flex-1">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">2. 또는 일본어 직접 입력</label>
+                    <textarea id="textInput" rows="4" placeholder="例: これはテストです。 (예: 이것은 테스트입니다.)" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150"></textarea>
+                </div>
+            </div>
+            
+            <!-- 실행 버튼 -->
+            <button id="runButton" onclick="processTranslation()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-[1.01] flex items-center justify-center disabled:opacity-50" disabled>
+                <span id="buttonText">번역 시작</span>
+                <svg id="loadingSpinner" class="hidden w-5 h-5 ml-2 text-white animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+            </button>
+        </div>
+
+        <!-- 결과 섹션 -->
+        <div id="resultsSection" class="mt-10 pt-8 border-t border-gray-200 hidden">
+            <h2 class="text-2xl font-semibold text-gray-800 mb-6">번역 결과</h2>
+
+            <!-- OCR / 원본 텍스트 -->
+            <div class="bg-indigo-50 p-5 rounded-xl mb-6">
+                <h3 class="text-lg font-medium text-indigo-800 mb-2">3. 원본(일본어) 텍스트 추출/입력</h3>
+                <p id="originalText" class="text-indigo-900 whitespace-pre-wrap break-words"></p>
+            </div>
+            
+            <!-- 번역된 한국어 -->
+            <div class="bg-green-50 p-5 rounded-xl shadow-inner">
+                <h3 class="text-lg font-medium text-green-800 mb-2">4. 한국어 번역 결과 (대체 영역 시뮬레이션)</h3>
+                <p id="translatedText" class="text-green-900 font-bold text-xl whitespace-pre-wrap break-words"></p>
+            </div>
+            
+             <!-- 이미지 미리보기 -->
+             <div id="imagePreviewContainer" class="mt-6 hidden">
+                <h3 class="text-lg font-medium text-gray-700 mb-2">클립보드 이미지 미리보기 (용량 최소화를 위해 임시 표시)</h3>
+                <img id="imagePreview" class="max-w-full h-auto rounded-lg border border-gray-300 shadow-md mx-auto" alt="업로드된 이미지 미리보기" />
+            </div>
+        </div>
+        
+    </div>
+
+    <script type="module">
+        // Gemini API 호출에 사용될 URL. API 키는 이 실행 환경에서 자동으로 처리됩니다.
+        const apiKey = "";
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+        
+        // 전역 DOM 요소 참조
+        const textInput = document.getElementById('textInput');
+        const runButton = document.getElementById('runButton');
+        const buttonText = document.getElementById('buttonText');
+        const loadingSpinner = document.getElementById('loadingSpinner');
+        const resultsSection = document.getElementById('resultsSection');
+        const originalTextDisplay = document.getElementById('originalText');
+        const translatedTextDisplay = document.getElementById('translatedText');
+        const imagePreview = document.getElementById('imagePreview');
+        const imagePreviewContainer = document.getElementById('imagePreviewContainer');
+        const pasteArea = document.getElementById('pasteArea');
+        const pasteHint = document.getElementById('pasteHint');
+
+        // 상태 관리
+        let isProcessing = false;
+        let imageBlob = null; // 클립보드에서 붙여넣은 이미지 데이터를 저장
+        const MAX_IMAGE_SIZE_MB = 10; // 최대 이미지 크기 제한 (10MB)
+
+        // --- UI 활성화/비활성화 및 상태 관리 ---
+        function updateButtonState() {
+            const hasImage = imageBlob !== null;
+            const hasText = textInput.value.trim().length > 0;
+            const canRun = (hasImage || hasText) && !isProcessing;
+            
+            runButton.disabled = !canRun;
+            if (!isProcessing) {
+                buttonText.textContent = '번역 시작';
+                loadingSpinner.classList.add('hidden');
+            } else {
+                loadingSpinner.classList.remove('hidden');
+            }
+        }
+        
+        // 텍스트 입력 감지
+        textInput.addEventListener('input', () => {
+            // 텍스트 입력 시 이미지 입력(붙여넣기) 상태 초기화
+            if (textInput.value.trim().length > 0) {
+                imageBlob = null;
+                imagePreviewContainer.classList.add('hidden');
+                pasteHint.textContent = "텍스트를 입력하여 이미지는 비활성화됨";
+                pasteArea.classList.add('active'); // 활성화 상태 유지처럼 보임
+            } else {
+                pasteHint.textContent = "이 영역에 캡처 이미지를 붙여넣으세요.";
+                pasteArea.classList.remove('active');
+            }
+            updateButtonState();
+        });
+
+        // --- 클립보드 붙여넣기 이벤트 핸들러 ---
+        document.addEventListener('paste', function(event) {
+            // 텍스트 입력란이 비어있지 않으면 붙여넣기 무시
+            if (textInput.value.trim().length > 0) return;
+
+            const items = event.clipboardData.items;
+            let foundImage = false;
+
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf('image') !== -1) {
+                    event.preventDefault(); // 기본 붙여넣기 동작 방지
+                    const file = items[i].getAsFile();
+
+                    if (file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024) {
+                        alert(`이미지 크기가 너무 큽니다. ${MAX_IMAGE_SIZE_MB}MB 이하의 이미지를 사용해주세요.`);
+                        continue;
+                    }
+
+                    imageBlob = file; // 이미지 데이터 저장
+                    foundImage = true;
+                    
+                    // 이미지 미리보기 업데이트 (용량 최소화를 위한 임시 표시)
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        imagePreview.src = e.target.result;
+                        imagePreviewContainer.classList.remove('hidden');
+                        pasteArea.classList.add('active');
+                        pasteHint.textContent = "이미지 붙여넣기 완료! 아래 '번역 시작' 버튼을 누르세요.";
+                        updateButtonState();
+                    };
+                    reader.readAsDataURL(file);
+                    break;
+                }
+            }
+
+            if (!foundImage && imageBlob === null) {
+                 pasteHint.textContent = "이미지가 클립보드에서 감지되지 않았습니다. 다시 캡처 후 붙여넣어 주세요.";
+            }
+        });
+
+        // 초기 상태 설정
+        updateButtonState();
+
+
+        // --- Tesseract OCR 함수 (일본어 인식) ---
+        async function runOCR(imageFile) {
+            buttonText.textContent = "OCR 진행 중...";
+            console.log("OCR 시작...");
+            
+            try {
+                // Tesseract worker 생성 및 일본어(jpn) 로드
+                const worker = await Tesseract.createWorker('jpn');
+
+                const { data: { text } } = await worker.recognize(imageFile);
+                
+                await worker.terminate();
+                
+                console.log("OCR 결과:", text);
+                return text.trim();
+                
+            } catch (error) {
+                console.error("Tesseract OCR 오류:", error);
+                throw new Error("OCR 중 오류가 발생했습니다. 이미지 파일이 유효한지 확인해주세요.");
+            }
+        }
+
+        // --- Gemini API 호출 함수 (번역) ---
+        async function translateText(japaneseText) {
+            buttonText.textContent = "번역 진행 중...";
+            console.log("Gemini API 번역 시작...");
+            
+            const systemPrompt = "당신은 전문적인 일본어-한국어 번역가입니다. 제공된 일본어 텍스트를 가장 자연스럽고 정확하며, 격식에 맞는 한국어로 번역하세요. 번역된 한국어 텍스트만 출력해야 하며, 어떠한 설명이나 추가 문장도 포함하지 마세요.";
+            
+            const payload = {
+                contents: [{ parts: [{ text: `번역할 일본어 텍스트: ${japaneseText}` }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+            };
+
+            let maxRetries = 3;
+            let delay = 1000;
+            
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        const candidate = result.candidates?.[0];
+
+                        if (candidate && candidate.content?.parts?.[0]?.text) {
+                            const translated = candidate.content.parts[0].text.trim();
+                            console.log("번역 결과:", translated);
+                            return translated;
+                        } else {
+                            throw new Error("Gemini API에서 유효한 텍스트를 반환하지 않았습니다.");
+                        }
+                    } else if (response.status === 429 && i < maxRetries - 1) {
+                        console.warn(`API 제한: ${delay}ms 후 재시도...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        delay *= 2; // 지연 시간 증가 (Exponential Backoff)
+                    } else {
+                        const errorBody = await response.text();
+                        throw new Error(`API 호출 실패: ${response.status} - ${errorBody}`);
+                    }
+                } catch (error) {
+                    console.error("Gemini API 호출 중 오류 발생:", error);
+                    if (i === maxRetries - 1) throw error; // 마지막 시도에서만 에러 던지기
+                }
+            }
+            throw new Error("API 호출에 실패했습니다.");
+        }
+
+        // --- 메인 처리 로직 ---
+        window.processTranslation = async function() {
+            if (isProcessing) return;
+            isProcessing = true;
+            
+            originalTextDisplay.textContent = '처리 중...';
+            translatedTextDisplay.textContent = '처리 중...';
+            resultsSection.classList.remove('hidden');
+            updateButtonState();
+
+            try {
+                let japaneseText = '';
+                const inputTextBox = textInput.value.trim();
+
+                if (imageBlob) {
+                    // 클립보드 이미지인 경우 OCR 수행
+                    japaneseText = await runOCR(imageBlob);
+                    if (!japaneseText) {
+                        throw new Error("이미지에서 일본어 텍스트를 추출하지 못했습니다. 더 선명한 이미지를 사용해보세요.");
+                    }
+
+                } else if (inputTextBox) {
+                    // 텍스트 직접 입력인 경우
+                    japaneseText = inputTextBox;
+                    imagePreviewContainer.classList.add('hidden');
+                } else {
+                    // 이 경로는 runButton.disabled 때문에 도달하지 않아야 하지만, 안전을 위해 추가
+                    throw new Error("이미지를 붙여넣거나 일본어 텍스트를 입력해야 합니다.");
+                }
+
+                // OCR/입력된 텍스트 표시
+                originalTextDisplay.textContent = japaneseText;
+
+                // 번역 수행
+                const koreanTranslation = await translateText(japaneseText);
+                
+                // 결과 표시
+                translatedTextDisplay.textContent = koreanTranslation;
+
+            } catch (error) {
+                console.error("최종 처리 오류:", error);
+                const errorMessage = error.message || "알 수 없는 오류가 발생했습니다.";
+                
+                // 오류 메시지를 사용자에게 표시
+                originalTextDisplay.textContent = `❌ 오류 발생: ${errorMessage}`;
+                translatedTextDisplay.textContent = '번역을 완료할 수 없었습니다.';
+                
+            } finally {
+                isProcessing = false;
+                updateButtonState();
+            }
+        }
+    </script>
+</body>
+</html>
